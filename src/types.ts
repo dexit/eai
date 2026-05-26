@@ -40,6 +40,10 @@ export interface ExecutionHistoryItem {
   status: number;
   timeMs: number;
   timestamp: string;
+  headers?: HeaderItem[];
+  queryParams?: QueryParamItem[];
+  body?: string;
+  responseBody?: string;
 }
 
 export interface ResponseData {

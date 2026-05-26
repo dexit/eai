@@ -37,23 +37,101 @@ import {
   ResponseData, 
   AIDocumentationResult 
 } from "./types";
+import RequestBodyEditor from "./components/RequestBodyEditor";
+
+// Enterprise standard preloaded Apprenticeship presets
+const APPRENTICESHIP_PRESETS = [
+  {
+    name: "Advert V2: Search Vacancies",
+    url: "https://api.apprenticeships.education.gov.uk/vacancies?pageNumber=1&pageSize=10&sort=Age&searchTerm=Software%20Developer",
+    method: "GET",
+    headers: [
+      { key: "Ocp-Apim-Subscription-Key", value: "{{APPRENTICESHIPS_SUB_KEY}}", enabled: true },
+      { key: "X-Version", value: "2", enabled: true },
+      { key: "Accept", value: "application/json", enabled: true }
+    ],
+    queryParams: [
+      { key: "pageNumber", value: "1", enabled: true },
+      { key: "pageSize", value: "10", enabled: true },
+      { key: "sort", value: "Age", enabled: true },
+      { key: "searchTerm", value: "Software Developer", enabled: true }
+    ],
+    body: ""
+  },
+  {
+    name: "Advert V2: Find by Reference",
+    url: "https://api.apprenticeships.education.gov.uk/vacancies/{{VACANCY_REFERENCE}}",
+    method: "GET",
+    headers: [
+      { key: "Ocp-Apim-Subscription-Key", value: "{{APPRENTICESHIPS_SUB_KEY}}", enabled: true },
+      { key: "X-Version", value: "2", enabled: true },
+      { key: "Accept", value: "application/json", enabled: true }
+    ],
+    queryParams: [],
+    body: ""
+  },
+  {
+    name: "Recruit V1: Create Advert draft",
+    url: "https://api.apprenticeships.education.gov.uk/recruitment/vacancies",
+    method: "POST",
+    headers: [
+      { key: "Ocp-Apim-Subscription-Key", value: "{{APPRENTICESHIPS_SUB_KEY}}", enabled: true },
+      { key: "Authorization", value: "Bearer {{RECRUITER_BEARER_TOKEN}}", enabled: true },
+      { key: "Content-Type", value: "application/json", enabled: true }
+    ],
+    queryParams: [],
+    body: JSON.stringify({
+      title: "Junior full-stack code consultant apprentice",
+      shortDescription: "Excellent trainee opportunity working with modern React platforms, Git flows, and REST architectures.",
+      numberOfPositions: 1,
+      employerName: "Innovate Solutions Ltd",
+      apprenticeshipRoute: "Digital",
+      programmeId: "96",
+      wage: {
+        wageType: "ApprenticeshipMinimum",
+        workingWeekDescription: "Monday to Friday, 9:00 AM - 5:30 PM with 1 hour for lunch break."
+      }
+    }, null, 2)
+  },
+  {
+    name: "Recruit V1: Read applications",
+    url: "https://api.apprenticeships.education.gov.uk/recruitment-sandbox/vacancies?pageNumber=1&pageSize=10",
+    method: "GET",
+    headers: [
+      { key: "Ocp-Apim-Subscription-Key", value: "{{APPRENTICESHIPS_SUB_KEY}}", enabled: true },
+      { key: "Authorization", value: "Bearer {{RECRUITER_BEARER_TOKEN}}", enabled: true }
+    ],
+    queryParams: [
+      { key: "pageNumber", value: "1", enabled: true },
+      { key: "pageSize", value: "10", enabled: true }
+    ],
+    body: ""
+  }
+];
 
 export default function App() {
   // Main Request Configuration State
-  const [endpointName, setEndpointName] = useState("User Details Endpoint");
-  const [url, setUrl] = useState("https://jsonplaceholder.typicode.com/users/1");
+  const [endpointName, setEndpointName] = useState("Apprenticeship Vacancy Search (v2)");
+  const [url, setUrl] = useState("https://api.apprenticeships.education.gov.uk/vacancies?pageNumber=1&pageSize=10&sort=Age&searchTerm=Software%20Developer");
   const [method, setMethod] = useState("GET");
   const [headers, setHeaders] = useState<HeaderItem[]>([
-    { key: "Content-Type", value: "application/json", enabled: true },
+    { key: "Ocp-Apim-Subscription-Key", value: "{{APPRENTICESHIPS_SUB_KEY}}", enabled: true },
+    { key: "X-Version", value: "2", enabled: true },
     { key: "Accept", value: "application/json", enabled: true }
   ]);
   const [body, setBody] = useState("");
-  const [queryParams, setQueryParams] = useState<QueryParamItem[]>([]);
+  const [queryParams, setQueryParams] = useState<QueryParamItem[]>([
+    { key: "pageNumber", value: "1", enabled: true },
+    { key: "pageSize", value: "10", enabled: true },
+    { key: "sort", value: "Age", enabled: true },
+    { key: "searchTerm", value: "Software Developer", enabled: true }
+  ]);
 
   // Environments variables
   const [envVars, setEnvVars] = useState<EnvVariable[]>([
-    { key: "BASE_URL", value: "https://jsonplaceholder.typicode.com", enabled: true },
-    { key: "API_VERSION", value: "v1", enabled: true }
+    { key: "APPRENTICESHIPS_SUB_KEY", value: "your_subscription_key_here", enabled: true },
+    { key: "VACANCY_REFERENCE", value: "1000012345", enabled: true },
+    { key: "RECRUITER_BEARER_TOKEN", value: "your_recruitment_auth_token", enabled: true }
   ]);
 
   // Saved Endpoints and History
@@ -376,6 +454,10 @@ export default function App() {
         status: data.status,
         timeMs: data.timeMs,
         timestamp: new Date().toLocaleTimeString(),
+        headers: [...headers],
+        queryParams: [...queryParams],
+        body: body,
+        responseBody: data.body,
       };
       updateHistoryInLocal([newHistoryItem, ...history.slice(0, 19)]);
     } catch (error: any) {
@@ -425,6 +507,73 @@ export default function App() {
     setBody(se.body || "");
     setQueryParams(se.queryParams || []);
     setResponse(null);
+    setAiResult(null);
+  };
+
+  // Dedicated loader for UK Apprenticeships presets
+  const loadApprenticeshipPreset = (preset: any) => {
+    setEndpointName(preset.name);
+    setUrl(preset.url);
+    setMethod(preset.method);
+    setHeaders(preset.headers || []);
+    setBody(preset.body || "");
+    setQueryParams(preset.queryParams || []);
+    setResponse(null);
+    setAiResult(null);
+
+    // Ensure all required placeholder tags exist in the Environment variables list
+    const updatedVars = [...envVars];
+    
+    // Check headers for variables
+    preset.headers?.forEach((h: any) => {
+      if (h.value && h.value.startsWith("{{") && h.value.endsWith("}}")) {
+        const key = h.value.slice(2, -2);
+        if (!updatedVars.some(ev => ev.key === key)) {
+          updatedVars.push({ key, value: `sandbox_key_${key.toLowerCase()}`, enabled: true });
+        }
+      }
+    });
+
+    // Check URL string pattern for variables
+    const matches = preset.url.match(/\{\{([^}]+)\}\}/g);
+    if (matches) {
+      matches.forEach((m: string) => {
+        const key = m.slice(2, -2);
+        if (!updatedVars.some(ev => ev.key === key)) {
+          updatedVars.push({ key, value: `1000018520`, enabled: true });
+        }
+      });
+    }
+
+    setEnvVars(updatedVars);
+  };
+
+  // Load a call history item to workspace
+  const handleLoadHistoryItem = (item: ExecutionHistoryItem) => {
+    setUrl(item.url);
+    setMethod(item.method);
+    if (item.headers) {
+      setHeaders(item.headers);
+    }
+    if (item.queryParams) {
+      setQueryParams(item.queryParams);
+    }
+    if (item.body !== undefined) {
+      setBody(item.body);
+    }
+    if (item.responseBody) {
+      setResponse({
+        status: item.status,
+        statusText: item.status === 200 ? "OK" : "Loaded from history",
+        headers: { "content-type": "application/json" },
+        body: item.responseBody,
+        timeMs: item.timeMs,
+        sizeBytes: item.responseBody.length,
+        isJson: true
+      });
+    } else {
+      setResponse(null);
+    }
     setAiResult(null);
   };
 
@@ -702,6 +851,51 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
             />
           </div>
 
+          {/* UK Education & Apprenticeships API Presets block */}
+          <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-xl border border-indigo-950 p-4 shadow-md flex flex-col gap-2.5">
+            <div className="flex items-center gap-1.5 border-b border-indigo-700/40 pb-2">
+              <Sparkles className="w-4 h-4 text-purple-300 animate-pulse" />
+              <div>
+                <h3 className="text-xs font-extrabold tracking-wider uppercase text-purple-200">
+                  UK Apprenticeships Portal
+                </h3>
+                <p className="text-[10px] text-indigo-200">Display Advert API v2 & Sandboxes</p>
+              </div>
+            </div>
+            
+            <p className="text-[11px] text-indigo-100/80 leading-relaxed">
+              Auto-populate the client with multiheaders (<span className="font-mono text-indigo-300">Ocp-Apim-Subscription-Key</span>), query schemas, and request payloads:
+            </p>
+
+            <div className="grid grid-cols-1 gap-1.5 pt-1">
+              {APPRENTICESHIP_PRESETS.map((preset, index) => {
+                const isActive = endpointName === preset.name;
+                return (
+                  <button
+                    key={index}
+                    onClick={() => loadApprenticeshipPreset(preset)}
+                    className={`text-left text-[11px] py-1.5 px-2.5 rounded font-medium flex items-center justify-between transition-all group ${
+                      isActive 
+                        ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm border border-blue-500" 
+                        : "bg-indigo-950 hover:bg-indigo-800/60 text-indigo-100 border border-indigo-850"
+                    }`}
+                  >
+                    <span className="truncate">{preset.name}</span>
+                    <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                      preset.method === "GET" 
+                        ? "bg-green-500/20 text-green-300" 
+                        : "bg-blue-500/20 text-blue-300"
+                    }`}>{preset.method}</span>
+                  </button>
+                );
+              })}
+            </div>
+            
+            <div className="text-[10px] text-indigo-300 bg-indigo-950/80 p-2 rounded border border-indigo-800/40 mt-1 leading-normal">
+              💡 Register at <a href="https://developer.apprenticeships.education.gov.uk/" target="_blank" rel="noopener noreferrer" className="underline text-purple-300 hover:text-purple-100 font-semibold">apprenticeships dev hub</a> to acquire subscription keys.
+            </div>
+          </div>
+
           {/* Active Environments */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
@@ -826,20 +1020,25 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
                 <p className="text-[11px] text-gray-400 text-center py-8">Requests you send will log here.</p>
               ) : (
                 history.map((h, i) => (
-                  <div key={h.id || i} className="flex items-center justify-between p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-150 transition">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[9px] font-bold py-0.5 px-1.5 rounded ${
-                        h.method === "GET" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"
+                  <button 
+                    key={h.id || i} 
+                    onClick={() => handleLoadHistoryItem(h)}
+                    className="w-full flex items-center justify-between p-2 rounded text-left hover:bg-gray-100/80 active:bg-gray-200 border border-gray-100 hover:border-gray-200/80 transition cursor-pointer group"
+                    title="Click to restore this request payload and state"
+                  >
+                    <div className="flex items-center gap-2 overflow-hidden mr-1">
+                      <span className={`text-[9px] font-bold py-0.5 px-1.5 rounded flex-shrink-0 ${
+                        h.method === "GET" ? "bg-green-100 text-green-700 font-bold" : "bg-blue-100 text-blue-700 font-bold"
                       }`}>{h.method}</span>
-                      <span className="text-[10px] text-gray-600 truncate max-w-[130px] font-mono">{h.url}</span>
+                      <span className="text-[10px] text-gray-700 truncate font-mono" title={h.url}>{h.url}</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[9px] font-mono px-1 rounded ${
-                        String(h.status).startsWith("2") ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                        String(h.status).startsWith("2") ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-rose-50 text-rose-700 border border-rose-100"
                       }`}>{h.status}</span>
                       <span className="text-[9px] text-gray-400 font-mono">{h.timeMs}ms</span>
                     </div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
@@ -1058,35 +1257,15 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
 
               {/* Tab 3: Request Payload body config */}
               {activeTab === "body" && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-gray-400">Configure request payloads for POST, PUT, or PATCH calls. String values accept environment parameters.</p>
-                    {jsonValidationError && (
-                      <span className="text-xs text-red-600 bg-red-50 px-2.5 py-1 rounded border border-red-200 flex items-center gap-1">
-                        <ShieldAlert className="w-3.5 h-3.5" /> Invalid JSON: {jsonValidationError}
-                      </span>
-                    )}
-                  </div>
-                  <textarea 
-                    value={body} 
-                    onChange={(e) => handleBodyChange(e.target.value)}
-                    placeholder='{&#10;  "title": "foo",&#10;  "body": "bar",&#10;  "userId": 1&#10;}'
-                    className="w-full h-44 font-mono text-xs p-4 bg-gray-900 text-gray-100 border border-gray-700 rounded-xl focus:border-blue-500 outline-none transition" 
+                <div className="space-y-4">
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Configure raw JSON request payloads for POST, PUT, or PATCH calls here. Hover features enable syntax checks, bracket counting, line offsets, format filters, and environment variables (e.g., <code className="px-1.5 py-0.5 rounded font-mono text-[10.5px] bg-indigo-50 border border-indigo-100 text-indigo-700 font-semibold inline-block">{"{{APPRENTICESHIPS_SUB_KEY}}"}</code>) interpolation.
+                  </p>
+                  <RequestBodyEditor 
+                    value={body}
+                    onChange={handleBodyChange}
+                    jsonValidationError={jsonValidationError}
                   />
-                  <div className="flex justify-end gap-2">
-                    <button 
-                      onClick={() => handleBodyChange('{\n  "clientId": "{{CLIENT_ID}}",\n  "status": "active"\n}')} 
-                      className="text-xs text-slate-600 border px-2 py-1.5 rounded-lg hover:bg-gray-50"
-                    >
-                      Auth Payload Pattern
-                    </button>
-                    <button 
-                      onClick={() => handleBodyChange('{\n  "name": "Jane Miller",\n  "role": "Consultant",\n  "permissions": ["read_write"]\n}')} 
-                      className="text-xs text-slate-600 border px-2 py-1.5 rounded-lg hover:bg-gray-50"
-                    >
-                      Standard Entity Data
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
