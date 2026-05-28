@@ -46,6 +46,56 @@ export interface ExecutionHistoryItem {
   responseBody?: string;
 }
 
+export interface ImportJobConfig {
+  url: string;
+  method: string;
+  headers: HeaderItem[];
+  queryParams: QueryParamItem[];
+  body: string;
+}
+
+export interface PaginationConfig {
+  type: "none" | "query";
+  paramKey: string;
+  startValue: number;
+  endValue: number;
+  pageSizeKey: string;
+  pageSizeValue: number;
+  delayMs: number;
+  autoStopEmpty: boolean;
+}
+
+export interface ImportJobLog {
+  timestamp: string;
+  type: "info" | "success" | "warning" | "error";
+  message: string;
+}
+
+export interface PagePerformanceMetric {
+  page: number;
+  latencyMs: number;
+  recordCount: number;
+  sizeBytes: number;
+  timestamp: string;
+}
+
+export interface ImportJob {
+  id: string;
+  name: string;
+  createdAt: string;
+  config: ImportJobConfig;
+  pagination: PaginationConfig;
+  status: "idle" | "running" | "paused" | "success" | "failed";
+  currentPage: number;
+  logs: ImportJobLog[];
+  collectedCount: number;
+  items: any[];
+  detectedArrayKey?: string;
+  lastRunTimestamp?: string;
+  errorMessage?: string;
+  pageMetrics?: PagePerformanceMetric[];
+}
+
 export interface ResponseData {
   status: number;
   statusText: string;

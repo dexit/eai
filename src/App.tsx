@@ -38,6 +38,7 @@ import {
   AIDocumentationResult 
 } from "./types";
 import RequestBodyEditor from "./components/RequestBodyEditor";
+import ImportJobsManager from "./components/ImportJobsManager";
 
 // Enterprise standard preloaded Apprenticeship presets
 const APPRENTICESHIP_PRESETS = [
@@ -137,6 +138,9 @@ export default function App() {
   // Saved Endpoints and History
   const [savedEndpoints, setSavedEndpoints] = useState<SavedEndpoint[]>([]);
   const [history, setHistory] = useState<ExecutionHistoryItem[]>([]);
+  
+  // Workspace Mode (Playground VS Paginated Jobs Runner)
+  const [workspaceMode, setWorkspaceMode] = useState<"playground" | "jobs">("playground");
   
   // Interaction/UI States
   const [activeTab, setActiveTab] = useState<"headers" | "params" | "body">("headers");
@@ -831,8 +835,53 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
         </div>
       </header>
 
+      {/* Workspace Selection Navigation */}
+      <div className="bg-[#1f2937] text-white px-6 py-2.5 flex flex-wrap items-center justify-between border-b border-gray-800 gap-3">
+        <div className="flex bg-[#111827] p-1 rounded-xl shadow-inner border border-gray-800">
+          <button
+            onClick={() => setWorkspaceMode("playground")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-2 transition-all cursor-pointer ${
+              workspaceMode === "playground"
+                ? "bg-blue-600 text-white shadow-md font-extrabold"
+                : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            API Playground
+          </button>
+          <button
+            onClick={() => setWorkspaceMode("jobs")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-2 transition-all cursor-pointer ${
+              workspaceMode === "jobs"
+                ? "bg-[#4f46e5] text-white shadow-md font-extrabold"
+                : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            Import Job Runner ({localStorage.getItem("api_importer_jobs") ? JSON.parse(localStorage.getItem("api_importer_jobs")!).length : 0})
+          </button>
+        </div>
+        
+        <div className="text-xs text-gray-400 font-medium font-mono hidden sm:block">
+          Environment Synchronizer: <span className="text-indigo-400 font-bold font-mono">{envVars.filter(ev => ev.enabled && ev.value).length} variable sets active</span>
+        </div>
+      </div>
+
       {/* Workspace Area Layout */}
-      <div id="main-workspace-container" className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 p-5 max-w-[1700px] w-full mx-auto">
+      <div id="main-workspace-container" className="flex-1 max-w-[1700px] w-full mx-auto p-5">
+        {workspaceMode === "jobs" ? (
+          <ImportJobsManager
+            currentUrl={url}
+            currentMethod={method}
+            currentHeaders={headers}
+            currentQueryParams={queryParams}
+            currentBody={body}
+            currentName={endpointName}
+            envVars={envVars}
+            substituteVariables={substituteVariables}
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         
         {/* Left panels: Saved parameters, Environment variables, Run logs */}
         <div id="sidebar-panel" className="lg:col-span-3 flex flex-col gap-5">
@@ -1608,6 +1657,8 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
             </div>
           )}
         </div>
+        </div>
+        )}
       </div>
 
       {/* cURL Imports paste Setup modal */}
