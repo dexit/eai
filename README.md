@@ -1,3 +1,5 @@
+<img width="1876" height="778" alt="image" src="https://github.com/user-attachments/assets/126abf26-d4ef-49e5-a949-01193bd7d78c" />
+
 # Apprenticeship Vacancy API Client and Scraper
 
 A full-blown, highly specialized API Playground, Paginated Importer, and Virtual Relational Database Studio built for UK Apprenticeship Service APIs.
