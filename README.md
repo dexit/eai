@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/8a3e9cbe-39ed-4518-82d7-ac24b219d538
+
 <img width="1876" height="778" alt="image" src="https://github.com/user-attachments/assets/126abf26-d4ef-49e5-a949-01193bd7d78c" />
 
 # Apprenticeship Vacancy API Client and Scraper
