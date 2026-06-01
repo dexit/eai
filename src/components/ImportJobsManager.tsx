@@ -42,6 +42,9 @@ import {
   PagePerformanceMetric
 } from "../types";
 
+import PhpClientGenerator from './PhpClientGenerator';
+import { format, parseISO, isValid } from 'date-fns';
+
 interface ImportJobsManagerProps {
   currentUrl: string;
   currentMethod: string;
@@ -94,10 +97,11 @@ export default function ImportJobsManager({
   const [sqlFilters, setSqlFilters] = useState<{ field: string; op: string; val: string }[]>([]);
   const [manualJsonInput, setManualJsonInput] = useState("");
   const [showJsonImporter, setShowJsonImporter] = useState(false);
-  const [vdbExportFormat, setVdbExportFormat] = useState<"json" | "csv" | "sql" | "xml" | "tsv" | "markdown">("json");
+  const [vdbExportFormat, setVdbExportFormat] = useState<"json" | "csv" | "sql_mysql" | "sql_postgres" | "sql_sqlite" | "xml" | "tsv" | "markdown">("json");
   const [vdbToast, setVdbToast] = useState<{ message: string; type: "success" | "info" | "error" | null }>({ message: "", type: null });
   const [statsCategoryField, setStatsCategoryField] = useState("");
   const [vdbPage, setVdbPage] = useState<number>(1);
+  const [sqlAutoSave, setSqlAutoSave] = useState(true);
   const vdbPageSize = 10;
 
   // Active Runner State & reference to prevent overlapping cycles
@@ -233,7 +237,14 @@ export default function ImportJobsManager({
         } else if (Array.isArray(obj[key])) {
           res[propName] = obj[key].map((x: any) => typeof x === "object" ? JSON.stringify(x) : x).join("; ");
         } else {
-          res[propName] = obj[key] === null || obj[key] === undefined ? "" : String(obj[key]);
+          let val = obj[key];
+          if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(val)) {
+            try {
+              const parsed = parseISO(val);
+              if (isValid(parsed)) val = format(parsed, 'PPpp');
+            } catch(e) {}
+          }
+          res[propName] = val === null || val === undefined ? "" : String(val);
         }
       }
     }
@@ -365,35 +376,80 @@ export default function ImportJobsManager({
       fileContent = tsv;
       mimeType = "text/tab-separated-values";
       fileExtension = "tsv";
-    } else if (formatStr === "sql") {
-      // SQL insert statements
+    } else if (formatStr.startsWith("sql_")) {
+      const dialect = formatStr.replace("sql_", "");
       const fRows = rawItems.map(r => flattenObject(r)) as Record<string, string>[];
-      const headers = Array.from(new Set(fRows.reduce<string[]>((acc, x) => [...acc, ...Object.keys(x)], [])))
-        .map(h => h.replace(/[^a-z0-9_]/gi, "_").toLowerCase());
       
-      let sql = `-- Virtual Relational Table Export: ${tableName}\n`;
-      sql += `-- Total rows: ${rawItems.length}\n\n`;
-      sql += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`;
-      sql += `  id INT AUTO_INCREMENT PRIMARY KEY,\n`;
-      headers.slice(0, 15).forEach(h => {
-        sql += `  ${h} VARCHAR(512),\n`;
+      // Get all headers dynamically without truncating
+      const headersMap = new Map<string, string>(); // cleaned name -> original name
+      fRows.forEach(row => {
+        Object.keys(row).forEach(k => {
+           let safe = k.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+           if (/^[0-9]/.test(safe)) safe = "col_" + safe; // prevent identifier starting with digit
+           if (!headersMap.has(safe)) headersMap.set(safe, k);
+        });
       });
-      sql += `  raw_payload TEXT\n`;
-      sql += `);\n\n`;
-
+      
+      const cleanHeaders = Array.from(headersMap.keys());
+      let sql = `-- Virtual Relational Table Export: ${tableName}\n`;
+      sql += `-- Dialect: ${dialect.toUpperCase()}\n`;
+      sql += `-- Total columns mapped: ${cleanHeaders.length}\n`;
+      sql += `-- Total rows: ${rawItems.length}\n\n`;
+      
+      const q = dialect === "mysql" ? "`" : '"';
+      let createStmt = `CREATE TABLE IF NOT EXISTS ${q}${tableName}${q} (\n`;
+      
+      if (dialect === "sqlite") {
+         createStmt += `  ${q}id${q} INTEGER PRIMARY KEY AUTOINCREMENT,\n`;
+      } else if (dialect === "postgres") {
+         createStmt += `  ${q}id${q} SERIAL PRIMARY KEY,\n`;
+      } else { // mysql
+         createStmt += `  ${q}id${q} INT AUTO_INCREMENT PRIMARY KEY,\n`;
+      }
+      
+      cleanHeaders.forEach(h => {
+         createStmt += `  ${q}${h}${q} TEXT,\n`;
+      });
+      
+      if (dialect === "mysql") {
+          createStmt += `  ${q}raw_payload${q} JSON\n`;
+      } else if (dialect === "postgres") {
+          createStmt += `  ${q}raw_payload${q} JSONB\n`;
+      } else { // sqlite
+          createStmt += `  ${q}raw_payload${q} TEXT\n`;
+      }
+      createStmt += `);\n\n`;
+      sql += createStmt;
+      
       rawItems.forEach(item => {
         const flat = flattenObject(item);
         const colVals: string[] = [];
-        headers.slice(0, 15).forEach(h => {
-          const matchingKey = Object.keys(flat).find(k => k.replace(/[^a-z0-9_]/gi, "_").toLowerCase() === h);
-          let rawVal = matchingKey ? String(flat[matchingKey]) : "";
-          rawVal = rawVal.replace(/'/g, "''");
-          colVals.push(`'${rawVal}'`);
+        
+        cleanHeaders.forEach(h => {
+          const originalKey = headersMap.get(h)!;
+          let rawVal = flat[originalKey];
+          if (rawVal === undefined || rawVal === null) {
+              colVals.push("NULL");
+          } else {
+              let escaped = String(rawVal);
+              if (dialect === "mysql" || dialect === "postgres") {
+                  escaped = escaped.replace(/\\/g, "\\\\");
+              }
+              escaped = escaped.replace(/'/g, "''"); // standard SQL single quote escape
+              colVals.push(`'${escaped}'`);
+          }
         });
-        const fullRaw = JSON.stringify(item).replace(/'/g, "''");
-        sql += `INSERT INTO ${tableName} (${headers.slice(0, 15).join(", ")}, raw_payload) VALUES (${colVals.join(", ")}, '${fullRaw}');\n`;
+        
+        let rawPayload = JSON.stringify(item);
+        if (dialect === "mysql" || dialect === "postgres") {
+           rawPayload = rawPayload.replace(/\\/g, "\\\\");
+        }
+        rawPayload = rawPayload.replace(/'/g, "''");
+        
+        const colsPrefix = cleanHeaders.map(c => `${q}${c}${q}`).join(", ");
+        sql += `INSERT INTO ${q}${tableName}${q} (${colsPrefix}, ${q}raw_payload${q}) VALUES (${colVals.join(", ")}, '${rawPayload}');\n`;
       });
-
+      
       fileContent = sql;
       mimeType = "application/sql";
       fileExtension = "sql";
@@ -1003,6 +1059,19 @@ export default function ImportJobsManager({
               message: `Task Successful: Multi-page run completed. Extracted ${accumulatedItems.length} total unique item records.`
             }
           ];
+
+          // Trigger SQL AUTO SAVE for completed sequence
+          if (sqlAutoSave && accumulatedItems.length > 0) {
+              const safeTableName = Object.keys(vdbTables).find(tn => tn.startsWith(j.name)) 
+                                      || j.name.replace(/[^a-z0-9]/gi, "_").toLowerCase() + "_" + Date.now();
+              const newState = {
+                  ...vdbTables,
+                  [safeTableName]: accumulatedItems,
+              };
+              saveVdbToLocal(newState);
+              setVdbToast({ message: `Job ${j.name} finished. Auto-saved ${accumulatedItems.length} valid distinct entities to VDB.`, type: "success" });
+              setTimeout(() => setVdbToast({ message: "", type: null }), 4000);
+          }
         }
 
         return {
@@ -1562,6 +1631,13 @@ export default function ImportJobsManager({
                       </div>
                       
                       <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-indigo-200 rounded-full shadow-sm mr-2">
+                          <input type="checkbox" id="sqlAutoSave" className="w-3.5 h-3.5 accent-indigo-600" checked={sqlAutoSave} onChange={e => setSqlAutoSave(e.target.checked)} title="Automatically persist extracted schemas and data to client database upon job completion" />
+                          <label htmlFor="sqlAutoSave" className="text-[10px] font-bold text-indigo-800 tracking-wide uppercase cursor-pointer select-none">
+                            SQL Auto-Save Enabled
+                          </label>
+                        </div>
+                        
                         <button
                           onClick={() => {
                             if (confirm("Are you sure you want to completely purge the Virtual SQL Database?")) {
@@ -1772,7 +1848,9 @@ export default function ImportJobsManager({
                                 >
                                   <option value="json">JSON Array (.json)</option>
                                   <option value="csv">Flattened CSV (.csv)</option>
-                                  <option value="sql">SQL INSERT Script (.sql)</option>
+                                  <option value="sql_sqlite">SQL SQLite (.sql)</option>
+                                  <option value="sql_postgres">SQL PostgreSQL (.sql)</option>
+                                  <option value="sql_mysql">SQL MySQL (.sql)</option>
                                   <option value="xml">XML Feed Tagged (.xml)</option>
                                   <option value="tsv">TSV Flat Document (.tsv)</option>
                                   <option value="markdown">Markdown Table (.md)</option>
@@ -2174,145 +2252,8 @@ export default function ImportJobsManager({
 
                 {/* 4) TAB: PHP CODE GENERATOR */}
                 {activeRightTab === "php" && (
-                  <div className="flex-1 flex flex-col p-4 bg-slate-900 border-t border-slate-700 overflow-y-auto">
-                    <div className="flex items-center justify-between mb-2">
-                       <h5 className="text-xs font-bold text-slate-100 flex items-center gap-2 uppercase tracking-wide">
-                          <FileCode className="w-4 h-4 text-purple-400" />
-                          PHP Paginated API Client Generator
-                       </h5>
-                       <button
-                         onClick={() => {
-                           // Get code from pre DOM
-                           const txt = document.getElementById("php-generated-code")?.innerText || "";
-                           navigator.clipboard.writeText(txt);
-                         }}
-                         className="bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 flex items-center gap-1 rounded text-xs transition"
-                       >
-                         <Copy className="w-3 h-3" /> Copy PHP Script
-                       </button>
-                    </div>
-                    <div className="text-[11px] text-slate-400 mb-4 bg-slate-800/50 p-3 rounded border border-slate-700">
-                      Copy this standalone PHP multi-page crawler to run locally. Includes rate limits, JSON arrays payload handling, Auth headers, and SQL-ready properties formatting.
-                    </div>
-                    <pre id="php-generated-code" className="bg-[#0f172a] text-purple-300 font-mono text-[11px] p-4 rounded-xl border border-slate-800 overflow-x-auto">
-{`<?php
-/**
- * Standalone API PHP Scraper Auto-Generated
- * 
- * Target: ${activeJob.config.url}
- * Method: ${activeJob.config.method}
- */
-
-$baseUrl = "${activeJob.config.url}";
-$startPage = ${activeJob.pagination.startValue};
-$endPage = ${activeJob.pagination.endValue};
-$delayMs = ${activeJob.pagination.delayMs};
-$delaySeconds = max(1, round($delayMs / 1000));
-$paramKey = "${activeJob.pagination.paramKey}";
-
-print "Initializing scrape job for pages: {$startPage} through {$endPage}\\n";
-
-$headers = [
-${activeJob.config.headers.filter(h => h.enabled).map(h => `    "${h.key}: " . "${substituteVariables(h.value)}",`).join("\n")}
-    "Accept: application/json"
-];
-
-$allResults = [];
-
-for ($page = $startPage; $page <= $endPage; $page++) {
-    print "[Page {$page}] Dispatching Request...\\n";
-    
-    // Inject pagination GET parameters
-    $queryParts = parse_url($baseUrl, PHP_URL_QUERY);
-    $urlObj = $baseUrl . (empty($queryParts) ? "?" : "&") . "{$paramKey}={$page}";
-    
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $urlObj);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "${activeJob.config.method}");
-    ${activeJob.config.body ? `curl_setopt($ch, CURLOPT_POSTFIELDS, '${activeJob.config.body.replace(/'/g, "\\'")}');` : ""}
-    
-    $response = curl_exec($ch);
-    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    if ($error) {
-        print "CURL ERROR [Page {$page}]: {$error}\\n";
-        break;
-    }
-    
-    if ($httpcode !== 200) {
-        print "HTTP FAILURE [Code {$httpcode}] [Page {$page}] Aborting loop.\\n";
-        break;
-    }
-    
-    $decoded = json_decode($response, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        print "JSON Parsing Error.\\n";
-        continue;
-    }
-    
-    // Attempt array collection
-    $batch = [];
-    if (isset($decoded['${activeJob.detectedArrayKey || "results"}']) && is_array($decoded['${activeJob.detectedArrayKey || "results"}'])) {
-        $batch = $decoded['${activeJob.detectedArrayKey || "results"}'];
-    } elseif (isset($decoded['vacancies']) && is_array($decoded['vacancies'])) {
-        $batch = $decoded['vacancies'];
-    } else {
-        $batch = (is_array($decoded) && isset($decoded[0])) ? $decoded : [$decoded];
-    }
-    
-    $batchSize = count($batch);
-    print "[Page {$page}] OK. Found {$batchSize} items.\\n";
-
-    ${activeJob.config.detailLookup && activeJob.config.detailLookup.enabled ? `
-    // Deep Detail Lookup execution
-    print "Starting deep detail fetches...\\n";
-    $detailCount = 0;
-    foreach ($batch as &$item) {
-        $refValue = $item['${activeJob.config.detailLookup.referenceKeySource}'] ?? null;
-        if ($refValue) {
-            $compUrl = str_replace("{{reference}}", urlencode($refValue), "${activeJob.config.detailLookup.detailUrlTemplate}");
-            $chD = curl_init();
-            curl_setopt($chD, CURLOPT_URL, $compUrl);
-            curl_setopt($chD, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($chD, CURLOPT_HTTPHEADER, $headers);
-            $detailResp = curl_exec($chD);
-            if (curl_getinfo($chD, CURLINFO_HTTP_CODE) === 200) {
-                 $detailData = json_decode($detailResp, true);
-                 if (json_last_error() === JSON_ERROR_NONE) {
-                     $item['_detailLookup'] = $detailData;
-                     $detailCount++;
-                 }
-            }
-            curl_close($chD);
-            usleep(${activeJob.config.detailLookup.delayMs * 1000});
-        }
-    }
-    print "Completed {$detailCount} deep record extractions.\\n";
-    ` : ""}
-
-    $allResults = array_merge($allResults, $batch);
-    
-    ${activeJob.pagination.autoStopEmpty ? `if ($batchSize === 0) {
-        print "Page empty. Halting pagination.\\n";
-        break;
-    }` : ""}
-    
-    if ($page < $endPage) {
-        print "Rate limiting -> Sleeping {$delaySeconds}s...\\n";
-        sleep($delaySeconds);
-    }
-}
-
-File_put_contents('scraper_data.json', json_encode($allResults, JSON_PRETTY_PRINT));
-print "\\n=====================\\n";
-print "Task Completed. Total Extractions: " . count($allResults) . "\\n";
-print "Exported to: scraper_data.json\\n"; 
-?>`}
-                    </pre>
+                  <div className="flex-1 overflow-hidden flex flex-col">
+                    <PhpClientGenerator job={activeJob} substituteVariables={substituteVariables} />
                   </div>
                 )}
               </div>

@@ -40,6 +40,7 @@ import {
 import RequestBodyEditor from "./components/RequestBodyEditor";
 import ImportJobsManager from "./components/ImportJobsManager";
 import JSONTreeExplorer from "./components/JSONTreeExplorer";
+import AnalyticsDashboard from "./components/AnalyticsDashboard";
 
 // Enterprise standard preloaded Apprenticeship presets
 const APPRENTICESHIP_PRESETS = [
@@ -141,7 +142,18 @@ export default function App() {
   const [history, setHistory] = useState<ExecutionHistoryItem[]>([]);
   
   // Workspace Mode (Playground VS Paginated Jobs Runner)
-  const [workspaceMode, setWorkspaceMode] = useState<"playground" | "jobs">("playground");
+  const [workspaceMode, setWorkspaceMode] = useState<"playground" | "jobs" | "analytics">("playground");
+  const [vdbTables, setVdbTables] = useState<{ [tableName: string]: any[] }>({});
+
+  useEffect(() => {
+    // Try load global VDB
+    try {
+      const savedVdb = localStorage.getItem("api_importer_virtual_db");
+      if (savedVdb) {
+        setVdbTables(JSON.parse(savedVdb));
+      }
+    } catch(e) {}
+  }, []);
   
   // Interaction/UI States
   const [activeTab, setActiveTab] = useState<"headers" | "params" | "body">("headers");
@@ -861,6 +873,17 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
             <Database className="w-3.5 h-3.5" />
             Import Job Runner ({localStorage.getItem("api_importer_jobs") ? JSON.parse(localStorage.getItem("api_importer_jobs")!).length : 0})
           </button>
+          <button
+            onClick={() => setWorkspaceMode("analytics")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-2 transition-all cursor-pointer ${
+              workspaceMode === "analytics"
+                ? "bg-[#0ea5e9] text-white shadow-md font-extrabold"
+                : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Analytics Dashboard
+          </button>
         </div>
         
         <div className="text-xs text-gray-400 font-medium font-mono hidden sm:block">
@@ -870,7 +893,9 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
 
       {/* Workspace Area Layout */}
       <div id="main-workspace-container" className="flex-1 max-w-[1700px] w-full mx-auto p-5">
-        {workspaceMode === "jobs" ? (
+        {workspaceMode === "analytics" ? (
+          <AnalyticsDashboard vdbTables={vdbTables} />
+        ) : workspaceMode === "jobs" ? (
           <ImportJobsManager
             currentUrl={url}
             currentMethod={method}
