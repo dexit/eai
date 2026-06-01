@@ -39,6 +39,7 @@ import {
 } from "./types";
 import RequestBodyEditor from "./components/RequestBodyEditor";
 import ImportJobsManager from "./components/ImportJobsManager";
+import JSONTreeExplorer from "./components/JSONTreeExplorer";
 
 // Enterprise standard preloaded Apprenticeship presets
 const APPRENTICESHIP_PRESETS = [
@@ -144,7 +145,7 @@ export default function App() {
   
   // Interaction/UI States
   const [activeTab, setActiveTab] = useState<"headers" | "params" | "body">("headers");
-  const [activeOutputTab, setActiveOutputTab] = useState<"response" | "types" | "schema" | "snippets" | "ai">("response");
+  const [activeOutputTab, setActiveOutputTab] = useState<"response" | "visualizer" | "types" | "schema" | "snippets" | "ai">("response");
   const [activeSnippetLang, setActiveSnippetLang] = useState<"fetch" | "axios" | "python" | "curl">("fetch");
   const [curlPaste, setCurlPaste] = useState("");
   const [showCurlModal, setShowCurlModal] = useState(false);
@@ -944,6 +945,48 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
               💡 Register at <a href="https://developer.apprenticeships.education.gov.uk/" target="_blank" rel="noopener noreferrer" className="underline text-purple-300 hover:text-purple-100 font-semibold">apprenticeships dev hub</a> to acquire subscription keys.
             </div>
           </div>
+          
+          {/* Quick GIS Presets */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col p-4">
+            <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5 mb-2">
+               GIS Location Loaders
+            </h3>
+            <p className="text-[10px] text-gray-500 mb-2">Inject regional coordinates (Lat/Lon) to query params.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => {
+                const updated = [...queryParams.filter(q => q.key !== "lat" && q.key !== "lon" && q.key !== "distanceInMiles")];
+                updated.push({key: "lat", value: "52.4862", enabled: true});
+                updated.push({key: "lon", value: "-1.8904", enabled: true});
+                updated.push({key: "distanceInMiles", value: "10", enabled: true});
+                setQueryParams(updated);
+                syncParamsToUrl(updated);
+              }} className="text-[10px] py-1 border border-gray-200 rounded hover:bg-gray-50">Birmingham</button>
+              <button onClick={() => {
+                const updated = [...queryParams.filter(q => q.key !== "lat" && q.key !== "lon" && q.key !== "distanceInMiles")];
+                updated.push({key: "lat", value: "51.5074", enabled: true});
+                updated.push({key: "lon", value: "-0.1278", enabled: true});
+                updated.push({key: "distanceInMiles", value: "10", enabled: true});
+                setQueryParams(updated);
+                syncParamsToUrl(updated);
+              }} className="text-[10px] py-1 border border-gray-200 rounded hover:bg-gray-50">London</button>
+              <button onClick={() => {
+                const updated = [...queryParams.filter(q => q.key !== "lat" && q.key !== "lon" && q.key !== "distanceInMiles")];
+                updated.push({key: "lat", value: "53.4808", enabled: true});
+                updated.push({key: "lon", value: "-2.2426", enabled: true});
+                updated.push({key: "distanceInMiles", value: "10", enabled: true});
+                setQueryParams(updated);
+                syncParamsToUrl(updated);
+              }} className="text-[10px] py-1 border border-gray-200 rounded hover:bg-gray-50">Manchester</button>
+              <button onClick={() => {
+                const updated = [...queryParams.filter(q => q.key !== "lat" && q.key !== "lon" && q.key !== "distanceInMiles")];
+                updated.push({key: "lat", value: "53.7997", enabled: true});
+                updated.push({key: "lon", value: "-1.5492", enabled: true});
+                updated.push({key: "distanceInMiles", value: "10", enabled: true});
+                setQueryParams(updated);
+                syncParamsToUrl(updated);
+              }} className="text-[10px] py-1 border border-gray-200 rounded hover:bg-gray-50">Leeds</button>
+            </div>
+          </div>
 
           {/* Active Environments */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col">
@@ -1386,6 +1429,14 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
                     Response Body {response.isJson ? "(JSON)" : "(Raw Content)"}
                   </button>
                   <button 
+                    onClick={() => setActiveOutputTab("visualizer")} 
+                    className={`py-3 px-1.5 text-xs font-bold uppercase border-b-2 transition ${
+                      activeOutputTab === "visualizer" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    Tree Visualizer
+                  </button>
+                  <button 
                     onClick={() => setActiveOutputTab("types")} 
                     className={`py-3 px-1.5 text-xs font-bold uppercase border-b-2 transition ${
                       activeOutputTab === "types" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
@@ -1449,6 +1500,19 @@ ${headers.filter(h => h.enabled && h.key).map(h => `  -H "${h.key}: ${h.value}" 
                     <div className="bg-gray-900 border border-gray-800 text-gray-100 rounded-xl p-4 font-mono text-xs max-h-[460px] overflow-y-auto">
                       <pre>{response.isJson && parsedResponseObj ? JSON.stringify(parsedResponseObj, null, 2) : response.body}</pre>
                     </div>
+                  </div>
+                )}
+
+                {/* 1.5 JSON Visualizer tab */}
+                {activeOutputTab === "visualizer" && (
+                  <div className="border border-gray-200 rounded-xl overflow-hidden mt-2 max-h-[500px]">
+                    {response.isJson && parsedResponseObj ? (
+                      <JSONTreeExplorer data={parsedResponseObj} />
+                    ) : (
+                      <div className="p-10 text-center text-gray-500 italic text-sm">
+                        Tree visualization is only available for JSON responses.
+                      </div>
+                    )}
                   </div>
                 )}
 

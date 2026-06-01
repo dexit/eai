@@ -28,7 +28,8 @@ import {
   Upload,
   CheckCircle2,
   FileText,
-  Ban
+  Ban,
+  Copy
 } from "lucide-react";
 import { 
   ImportJob, 
@@ -77,8 +78,14 @@ export default function ImportJobsManager({
   const [delayBetweenPages, setDelayBetweenPages] = useState(1200);
   const [autoStopEmpty, setAutoStopEmpty] = useState(true);
 
+  // Detail Lookup states
+  const [enableDetailLookup, setEnableDetailLookup] = useState(false);
+  const [detailReferenceKeySource, setDetailReferenceKeySource] = useState("vacancyReference");
+  const [detailUrlTemplate, setDetailUrlTemplate] = useState("https://api.apprenticeships.education.gov.uk/vacancies/{{reference}}");
+  const [detailDelayMs, setDetailDelayMs] = useState(500);
+
   // Active Tab for running detail panel
-  const [activeRightTab, setActiveRightTab] = useState<"runner" | "vdb" | "stats">("runner");
+  const [activeRightTab, setActiveRightTab] = useState<"runner" | "vdb" | "stats" | "php">("runner");
 
   // Virtual SQL Database manager states
   const [vdbTables, setVdbTables] = useState<{ [tableName: string]: any[] }>({});
@@ -528,7 +535,13 @@ export default function ImportJobsManager({
         method: currentMethod,
         headers: headersSnapshot,
         queryParams: queryParamsSnapshot,
-        body: currentBody
+        body: currentBody,
+        detailLookup: {
+          enabled: enableDetailLookup,
+          referenceKeySource: detailReferenceKeySource,
+          detailUrlTemplate: detailUrlTemplate,
+          delayMs: detailDelayMs
+        }
       },
       pagination: {
         type: "query",
@@ -732,10 +745,20 @@ export default function ImportJobsManager({
         // Try to parse payload
         let itemsFetched: any[] = [];
         let keyFound = detectedKey;
+        let batchTotal = 0;
+        let batchTotalFiltered = 0;
+        let batchTotalPages = 0;
 
         if (runResult.body) {
           try {
             const parsed = JSON.parse(runResult.body);
+            // Extract root-level metadata if present
+            if (typeof parsed === 'object') {
+              if (parsed.total !== undefined) batchTotal = parsed.total;
+              if (parsed.totalFiltered !== undefined) batchTotalFiltered = parsed.totalFiltered;
+              if (parsed.totalPages !== undefined) batchTotalPages = parsed.totalPages;
+            }
+
             const extracted = extractArrayFromResponse(parsed);
             itemsFetched = extracted.items;
             if (extracted.detectedKey) {
@@ -743,6 +766,65 @@ export default function ImportJobsManager({
             }
           } catch (e) {
             // failed parsing JSON
+          }
+        }
+
+        // Apply Deep Reference Lookup if configured
+        if (job.config.detailLookup?.enabled && itemsFetched.length > 0) {
+          const detailConfig = job.config.detailLookup;
+          let detailAddedCount = 0;
+
+          // Sequential mapping to avoid rate-limiting triggers
+          for (let i = 0; i < itemsFetched.length; i++) {
+            if (!activeJobsRef.current[id]) break; // Abort if job paused
+
+            const item = itemsFetched[i];
+            const refValue = flattenObject(item)[detailConfig.referenceKeySource] || item[detailConfig.referenceKeySource];
+            
+            if (refValue) {
+               const compiledUrl = substituteVariables(detailConfig.detailUrlTemplate.replace("{{reference}}", String(refValue)));
+               try {
+                  const detailRes = await fetch("/api/import", {
+                    method: "GET",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      url: compiledUrl,
+                      method: "GET",
+                      headers: subbedHeaders
+                    })
+                  });
+
+                  if (detailRes.ok) {
+                    const detailResult = await detailRes.json();
+                    if (detailResult.status === 200 && detailResult.body) {
+                      const detailPayload = JSON.parse(detailResult.body);
+                      // Merge recursively or flatly at root
+                      Object.assign(item, { _detailLookup: detailPayload });
+                      detailAddedCount++;
+                    }
+                  }
+               } catch (e) {
+                  // silent continue
+               }
+               // Throttle detail lookup request
+               if (i < itemsFetched.length - 1) {
+                 await sleep(detailConfig.delayMs);
+               }
+            }
+          }
+
+          if (detailAddedCount > 0) {
+            currentInList = currentInList.map(j => {
+              if (j.id === id) {
+                return { ...j, logs: [...j.logs, {
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: "info",
+                  message: `[Page ${page}] Executed ${detailAddedCount} nested detail lookups mapped to "${detailConfig.referenceKeySource}".`
+                }] };
+              }
+              return j;
+            });
+            setJobs(currentInList);
           }
         }
 
@@ -821,6 +903,9 @@ export default function ImportJobsManager({
               currentPage: page,
               items: accumulatedItems,
               collectedCount: accumulatedItems.length,
+              total: batchTotal || j.total,
+              totalFiltered: batchTotalFiltered || j.totalFiltered,
+              totalPages: batchTotalPages || j.totalPages,
               detectedArrayKey: keyFound,
               logs: [...j.logs, logSuccess],
               pageMetrics: [...existingMetrics, pageMetric]
@@ -1238,7 +1323,7 @@ export default function ImportJobsManager({
               </div>
 
               {/* Progress and Configurations info */}
-              <div className="p-3 border-b border-gray-200 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3 border-b border-gray-200 grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div className="text-xs bg-gray-50 p-2.5 rounded-lg border border-gray-200/60">
                   <span className="text-gray-400 font-semibold block uppercase text-[8.5px] tracking-wider">Pagination Config</span>
                   <div className="font-medium text-gray-700 mt-1 space-y-0.5">
@@ -1260,6 +1345,19 @@ export default function ImportJobsManager({
                   <div className="font-medium text-gray-700 mt-1 space-y-0.5">
                     <div>Collected Array Key: <strong className="font-mono text-purple-600 truncate block max-w-[150px]">{activeJob.detectedArrayKey || "Locating..."}</strong></div>
                     <div>Stop on Empty: <span className="text-emerald-600 font-bold">{activeJob.pagination.autoStopEmpty ? "ACTIVE 👍" : "OFF"}</span></div>
+                  </div>
+                </div>
+                
+                <div className="text-xs bg-gray-50 p-2.5 rounded-lg border border-gray-200/60">
+                  <span className="text-gray-400 font-semibold block uppercase text-[8.5px] tracking-wider">Server Metadata</span>
+                  <div className="font-medium text-gray-700 mt-1 space-y-0.5">
+                    <div>Total Extracted: <strong className="font-bold text-indigo-600">{activeJob.items.length}</strong> {activeJob.total ? `/ ${activeJob.total}` : ''}</div>
+                    {activeJob.totalFiltered !== undefined && activeJob.totalFiltered !== 0 && (
+                      <div>Total Filtered: <strong className="font-bold text-gray-800">{activeJob.totalFiltered}</strong></div>
+                    )}
+                    {activeJob.totalPages !== undefined && activeJob.totalPages !== 0 && (
+                      <div>Total Pages: <strong className="font-bold text-gray-800">{activeJob.totalPages}</strong></div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1309,6 +1407,17 @@ export default function ImportJobsManager({
                       {activeJob.pageMetrics.length} pages
                     </span>
                   )}
+                </button>
+                <button
+                  onClick={() => setActiveRightTab("php")}
+                  className={`py-3 px-3.5 font-bold text-xs flex items-center gap-1.5 border-b-2 transition-all ${
+                    activeRightTab === "php"
+                      ? "border-indigo-600 text-indigo-700"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200"
+                  }`}
+                >
+                  <FileCode className="w-3.5 h-3.5" />
+                  PHP Code Generator
                 </button>
               </div>
 
@@ -2063,6 +2172,149 @@ export default function ImportJobsManager({
                   </div>
                 )}
 
+                {/* 4) TAB: PHP CODE GENERATOR */}
+                {activeRightTab === "php" && (
+                  <div className="flex-1 flex flex-col p-4 bg-slate-900 border-t border-slate-700 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-2">
+                       <h5 className="text-xs font-bold text-slate-100 flex items-center gap-2 uppercase tracking-wide">
+                          <FileCode className="w-4 h-4 text-purple-400" />
+                          PHP Paginated API Client Generator
+                       </h5>
+                       <button
+                         onClick={() => {
+                           // Get code from pre DOM
+                           const txt = document.getElementById("php-generated-code")?.innerText || "";
+                           navigator.clipboard.writeText(txt);
+                         }}
+                         className="bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 flex items-center gap-1 rounded text-xs transition"
+                       >
+                         <Copy className="w-3 h-3" /> Copy PHP Script
+                       </button>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mb-4 bg-slate-800/50 p-3 rounded border border-slate-700">
+                      Copy this standalone PHP multi-page crawler to run locally. Includes rate limits, JSON arrays payload handling, Auth headers, and SQL-ready properties formatting.
+                    </div>
+                    <pre id="php-generated-code" className="bg-[#0f172a] text-purple-300 font-mono text-[11px] p-4 rounded-xl border border-slate-800 overflow-x-auto">
+{`<?php
+/**
+ * Standalone API PHP Scraper Auto-Generated
+ * 
+ * Target: ${activeJob.config.url}
+ * Method: ${activeJob.config.method}
+ */
+
+$baseUrl = "${activeJob.config.url}";
+$startPage = ${activeJob.pagination.startValue};
+$endPage = ${activeJob.pagination.endValue};
+$delayMs = ${activeJob.pagination.delayMs};
+$delaySeconds = max(1, round($delayMs / 1000));
+$paramKey = "${activeJob.pagination.paramKey}";
+
+print "Initializing scrape job for pages: {$startPage} through {$endPage}\\n";
+
+$headers = [
+${activeJob.config.headers.filter(h => h.enabled).map(h => `    "${h.key}: " . "${substituteVariables(h.value)}",`).join("\n")}
+    "Accept: application/json"
+];
+
+$allResults = [];
+
+for ($page = $startPage; $page <= $endPage; $page++) {
+    print "[Page {$page}] Dispatching Request...\\n";
+    
+    // Inject pagination GET parameters
+    $queryParts = parse_url($baseUrl, PHP_URL_QUERY);
+    $urlObj = $baseUrl . (empty($queryParts) ? "?" : "&") . "{$paramKey}={$page}";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $urlObj);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "${activeJob.config.method}");
+    ${activeJob.config.body ? `curl_setopt($ch, CURLOPT_POSTFIELDS, '${activeJob.config.body.replace(/'/g, "\\'")}');` : ""}
+    
+    $response = curl_exec($ch);
+    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($error) {
+        print "CURL ERROR [Page {$page}]: {$error}\\n";
+        break;
+    }
+    
+    if ($httpcode !== 200) {
+        print "HTTP FAILURE [Code {$httpcode}] [Page {$page}] Aborting loop.\\n";
+        break;
+    }
+    
+    $decoded = json_decode($response, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        print "JSON Parsing Error.\\n";
+        continue;
+    }
+    
+    // Attempt array collection
+    $batch = [];
+    if (isset($decoded['${activeJob.detectedArrayKey || "results"}']) && is_array($decoded['${activeJob.detectedArrayKey || "results"}'])) {
+        $batch = $decoded['${activeJob.detectedArrayKey || "results"}'];
+    } elseif (isset($decoded['vacancies']) && is_array($decoded['vacancies'])) {
+        $batch = $decoded['vacancies'];
+    } else {
+        $batch = (is_array($decoded) && isset($decoded[0])) ? $decoded : [$decoded];
+    }
+    
+    $batchSize = count($batch);
+    print "[Page {$page}] OK. Found {$batchSize} items.\\n";
+
+    ${activeJob.config.detailLookup && activeJob.config.detailLookup.enabled ? `
+    // Deep Detail Lookup execution
+    print "Starting deep detail fetches...\\n";
+    $detailCount = 0;
+    foreach ($batch as &$item) {
+        $refValue = $item['${activeJob.config.detailLookup.referenceKeySource}'] ?? null;
+        if ($refValue) {
+            $compUrl = str_replace("{{reference}}", urlencode($refValue), "${activeJob.config.detailLookup.detailUrlTemplate}");
+            $chD = curl_init();
+            curl_setopt($chD, CURLOPT_URL, $compUrl);
+            curl_setopt($chD, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($chD, CURLOPT_HTTPHEADER, $headers);
+            $detailResp = curl_exec($chD);
+            if (curl_getinfo($chD, CURLINFO_HTTP_CODE) === 200) {
+                 $detailData = json_decode($detailResp, true);
+                 if (json_last_error() === JSON_ERROR_NONE) {
+                     $item['_detailLookup'] = $detailData;
+                     $detailCount++;
+                 }
+            }
+            curl_close($chD);
+            usleep(${activeJob.config.detailLookup.delayMs * 1000});
+        }
+    }
+    print "Completed {$detailCount} deep record extractions.\\n";
+    ` : ""}
+
+    $allResults = array_merge($allResults, $batch);
+    
+    ${activeJob.pagination.autoStopEmpty ? `if ($batchSize === 0) {
+        print "Page empty. Halting pagination.\\n";
+        break;
+    }` : ""}
+    
+    if ($page < $endPage) {
+        print "Rate limiting -> Sleeping {$delaySeconds}s...\\n";
+        sleep($delaySeconds);
+    }
+}
+
+File_put_contents('scraper_data.json', json_encode($allResults, JSON_PRETTY_PRINT));
+print "\\n=====================\\n";
+print "Task Completed. Total Extractions: " . count($allResults) . "\\n";
+print "Exported to: scraper_data.json\\n"; 
+?>`}
+                    </pre>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -2208,6 +2460,47 @@ export default function ImportJobsManager({
                   onChange={(e) => setAutoStopEmpty(e.target.checked)}
                   className="w-4 h-4 accent-indigo-600 cursor-pointer"
                 />
+              </div>
+
+              {/* Nested Detail Lookup */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">Deep Detail Reference Lookup</span>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">Extract sub-resources individually (WARNING: Slow!)</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={enableDetailLookup}
+                    onChange={(e) => setEnableDetailLookup(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                  />
+                </div>
+                
+                {enableDetailLookup && (
+                  <div className="space-y-3 pt-3 border-t border-slate-200">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">List Item Reference Key Source</label>
+                      <input
+                        type="text"
+                        value={detailReferenceKeySource}
+                        onChange={(e) => setDetailReferenceKeySource(e.target.value)}
+                        placeholder="e.g. vacancyReference or id"
+                        className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 focus:border-indigo-400 outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">Detail Endpoint URL Template</label>
+                      <input
+                        type="text"
+                        value={detailUrlTemplate}
+                        onChange={(e) => setDetailUrlTemplate(e.target.value)}
+                        className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 focus:border-indigo-400 outline-none bg-white font-medium"
+                      />
+                      <span className="text-[9px] text-slate-400 block mt-0.5">Use <code className="bg-slate-200 px-1 rounded text-slate-700">{"{{reference}}"}</code> where the key should substitute.</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 flex gap-2 text-[10.5px] text-amber-800 leading-normal">

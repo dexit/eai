@@ -46,12 +46,20 @@ export interface ExecutionHistoryItem {
   responseBody?: string;
 }
 
+export interface DetailLookupConfig {
+  enabled: boolean;
+  referenceKeySource: string;
+  detailUrlTemplate: string;
+  delayMs: number;
+}
+
 export interface ImportJobConfig {
   url: string;
   method: string;
   headers: HeaderItem[];
   queryParams: QueryParamItem[];
   body: string;
+  detailLookup?: DetailLookupConfig;
 }
 
 export interface PaginationConfig {
@@ -90,6 +98,9 @@ export interface ImportJob {
   logs: ImportJobLog[];
   collectedCount: number;
   items: any[];
+  total?: number;
+  totalFiltered?: number;
+  totalPages?: number;
   detectedArrayKey?: string;
   lastRunTimestamp?: string;
   errorMessage?: string;
