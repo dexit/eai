@@ -14,3 +14,5 @@ This file registers active progress checklists, preventing agent amnesia or losi
 * [x] Step 9: Establish "AnalyticsDashboard" as an isolated workspace mode reading from the Virtual DB, presenting aggregate KPI tiles and charting (pie layout distributions, time series aggregations).
 * [x] Step 10: Toggle setting option added for SQL Database explicit AUTO-SAVE directly on import completion logic.
 * [x] Step 11: Build full structural PHP Generator modal providing tree-based mapping of index, composer, env configs and `.zip` file exportation.
+* [x] Step 12: Analytics enhanced with grouping for long tail variants and long text truncation for high-cardinality label data representations.
+* [x] Step 13: Establish a unified Vercel deployment scaffolding (`vercel.json` config and independent `api/index.ts` serverless mount for the backend Express router).

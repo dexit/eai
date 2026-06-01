@@ -95,15 +95,21 @@ export default function AnalyticsDashboard({ vdbTables }: AnalyticsDashboardProp
     const counts: Record<string, number> = {};
     flatData.forEach(item => {
       let val = item[categoryField];
-      if (val === undefined || val === null) val = 'Unknown';
+      if (val === undefined || val === null || val === '') val = 'Unknown / None';
       const key = String(val);
       counts[key] = (counts[key] || 0) + 1;
     });
 
-    return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    
+    if (entries.length > 10) {
+      const top10 = entries.slice(0, 10);
+      const remaining = entries.slice(10).reduce((sum, [, count]) => sum + count, 0);
+      top10.push(['Other Variants / Long Tail', remaining]);
+      return top10.map(([name, value]) => ({ name, value }));
+    }
+
+    return entries.map(([name, value]) => ({ name, value }));
   }, [flatData, categoryField]);
 
   if (tableNames.length === 0) {
@@ -195,7 +201,7 @@ export default function AnalyticsDashboard({ vdbTables }: AnalyticsDashboardProp
                           outerRadius={100}
                           fill="#8884d8"
                           dataKey="value"
-                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          label={({ name, percent }) => `${name.length > 25 ? name.substring(0, 25) + '...' : name} ${(percent * 100).toFixed(0)}%`}
                         >
                           {categoryData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
